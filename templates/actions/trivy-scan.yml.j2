@@ -1,0 +1,60 @@
+name: Trivy scan
+description: Scan a directory (fs) or an image with Trivy. Fails on the configured severity; optionally uploads SARIF to code scanning.
+
+inputs:
+  scan-type:
+    description: Either "fs" (directory) or "image"
+    required: true
+  target:
+    description: Directory path (fs) or image reference (image)
+    required: true
+  report-severity:
+    description: Severities included in the SARIF report
+    default: CRITICAL,HIGH
+  fail-severity:
+    description: Severities that fail the step
+    default: CRITICAL
+  upload-sarif:
+    description: Upload the SARIF report to code scanning (fs scans only; job needs security-events write)
+    default: "false"
+  category:
+    description: Code scanning category for the SARIF upload
+    default: trivy
+
+runs:
+  using: composite
+  steps:
+    - name: Trivy filesystem report (SARIF)
+      if: inputs.scan-type == 'fs' && inputs.upload-sarif == 'true'
+      uses: << actions.trivy >>
+      with:
+        scan-type: fs
+        scan-ref: ${{ inputs.target }}
+        format: sarif
+        output: trivy-fs.sarif
+        severity: ${{ inputs.report-severity }}
+        ignore-unfixed: true
+        exit-code: "0"
+    - name: Upload SARIF to code scanning
+      if: inputs.scan-type == 'fs' && inputs.upload-sarif == 'true'
+      uses: << actions.sarif_upload >>
+      with:
+        sarif_file: trivy-fs.sarif
+        category: ${{ inputs.category }}
+    - name: Trivy filesystem gate
+      if: inputs.scan-type == 'fs'
+      uses: << actions.trivy >>
+      with:
+        scan-type: fs
+        scan-ref: ${{ inputs.target }}
+        severity: ${{ inputs.fail-severity }}
+        ignore-unfixed: true
+        exit-code: "1"
+    - name: Trivy image gate
+      if: inputs.scan-type == 'image'
+      uses: << actions.trivy >>
+      with:
+        image-ref: ${{ inputs.target }}
+        severity: ${{ inputs.fail-severity }}
+        ignore-unfixed: true
+        exit-code: "1"

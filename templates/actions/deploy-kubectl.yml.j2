@@ -1,0 +1,87 @@
+name: Deploy with kubectl
+description: Render the environment manifests with the image and deploy them (<< k8s_strategy >> strategy), then verify the rollout.
+
+inputs:
+  app-name:
+    description: Application name (manifest directory under deploy/k8s)
+    required: true
+  environment:
+    description: Environment name (manifest sub-directory)
+    required: true
+  namespace:
+    description: Target namespace
+    required: true
+  image:
+    description: Full image reference (repository with tag or digest)
+    required: true
+  pull-secret-name:
+    description: Image pull secret name (empty for none)
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Render manifests with image
+      shell: bash
+      env:
+        APP: ${{ inputs.app-name }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        IMAGE: ${{ inputs.image }}
+      run: sed -i "s|IMAGE_PLACEHOLDER|${IMAGE}|g" "deploy/k8s/${APP}/${ENVIRONMENT}"/*.yaml
+    - name: Deploy manifests
+      uses: << actions.k8s_deploy >>
+      with:
+        action: deploy
+        namespace: ${{ inputs.namespace }}
+        manifests: |
+          deploy/k8s/${{ inputs.app-name }}/${{ inputs.environment }}/deployment.yaml
+          deploy/k8s/${{ inputs.app-name }}/${{ inputs.environment }}/service.yaml
+        imagepullsecrets: ${{ inputs.pull-secret-name }}
+<% if k8s_strategy != "basic" %>
+        strategy: << k8s_strategy >>
+<% if k8s_strategy == "canary" %>
+        percentage: 25
+<% else %>
+        route-method: service
+<% endif %>
+    - name: Promote << k8s_strategy >> rollout
+      uses: << actions.k8s_deploy >>
+      with:
+        action: promote
+        namespace: ${{ inputs.namespace }}
+        manifests: |
+          deploy/k8s/${{ inputs.app-name }}/${{ inputs.environment }}/deployment.yaml
+          deploy/k8s/${{ inputs.app-name }}/${{ inputs.environment }}/service.yaml
+        strategy: << k8s_strategy >>
+<% if k8s_strategy != "canary" %>
+        route-method: service
+<% endif %>
+    - name: Reject << k8s_strategy >> rollout on failure
+      if: failure()
+      uses: << actions.k8s_deploy >>
+      with:
+        action: reject
+        namespace: ${{ inputs.namespace }}
+        manifests: |
+          deploy/k8s/${{ inputs.app-name }}/${{ inputs.environment }}/deployment.yaml
+          deploy/k8s/${{ inputs.app-name }}/${{ inputs.environment }}/service.yaml
+        strategy: << k8s_strategy >>
+<% if k8s_strategy != "canary" %>
+        route-method: service
+<% endif %>
+<% endif %>
+    - name: Verify rollout
+      shell: bash
+      env:
+        APP: ${{ inputs.app-name }}
+        NAMESPACE: ${{ inputs.namespace }}
+      run: kubectl rollout status "deployment/${APP}" --namespace "$NAMESPACE" --timeout=300s
+<% if k8s_strategy == "basic" %>
+    - name: Roll back on failure
+      if: failure()
+      shell: bash
+      env:
+        APP: ${{ inputs.app-name }}
+        NAMESPACE: ${{ inputs.namespace }}
+      run: kubectl rollout undo "deployment/${APP}" --namespace "$NAMESPACE" || true
+<% endif %>

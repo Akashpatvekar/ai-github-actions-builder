@@ -1,0 +1,73 @@
+name: CI (<< t.display >>)
+description: Set up << t.display >>, install dependencies, lint, test and build.
+
+inputs:
+  working-directory:
+    description: Directory of the application
+    default: "."
+  runtime-version:
+    description: Runtime version
+    default: "<< version >>"
+  run-lint:
+    description: Run lint step
+    default: "true"
+  run-tests:
+    description: Run test step
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+<% if t.setup_action == "setup_java" %>
+    - name: Set up << t.display >>
+      uses: << actions.setup_java >>
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.runtime-version }}
+        cache: << v.cache >>
+<% elif t.setup_action == "setup_node" %>
+    - name: Set up << t.display >>
+      uses: << actions.setup_node >>
+      with:
+        node-version: ${{ inputs.runtime-version }}
+        cache: << v.cache >>
+        cache-dependency-path: ${{ inputs.working-directory }}/<< 'yarn.lock' if v.cache == 'yarn' else 'package-lock.json' >>
+<% elif t.setup_action == "setup_python" %>
+    - name: Set up << t.display >>
+      uses: << actions.setup_python >>
+      with:
+        python-version: ${{ inputs.runtime-version }}
+        cache: << v.cache >>
+        cache-dependency-path: ${{ inputs.working-directory }}/<< v.dep_files[0] >>
+<% elif t.setup_action == "setup_dotnet" %>
+    - name: Set up << t.display >>
+      uses: << actions.setup_dotnet >>
+      with:
+        dotnet-version: ${{ inputs.runtime-version }}
+<% elif t.setup_action == "setup_go" %>
+    - name: Set up << t.display >>
+      uses: << actions.setup_go >>
+      with:
+        go-version: ${{ inputs.runtime-version }}
+        cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+<% endif %>
+<% if v.install %>
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: << v.install >>
+<% endif %>
+    - name: Lint
+      if: inputs.run-lint == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: << v.lint >>
+    - name: Test
+      if: inputs.run-tests == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: << v.test >>
+    - name: Build
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: << v.build >>

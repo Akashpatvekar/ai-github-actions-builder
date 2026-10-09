@@ -1,0 +1,57 @@
+name: Deploy with Helm
+description: Install or upgrade the application's Helm chart atomically and verify the rollout.
+
+inputs:
+  app-name:
+    description: Application name (chart directory under deploy/helm)
+    required: true
+  environment:
+    description: Environment name (selects values-<environment>.yaml)
+    required: true
+  namespace:
+    description: Target namespace
+    required: true
+  image-repository:
+    description: Image repository without tag or digest
+    required: true
+  image-tag:
+    description: Image tag (leave empty when a digest is used)
+    default: ""
+  image-digest:
+    description: Image digest (takes precedence over the tag)
+    default: ""
+  pull-secret-name:
+    description: Image pull secret name (empty for none)
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Helm upgrade --install
+      shell: bash
+      env:
+        APP: ${{ inputs.app-name }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        NAMESPACE: ${{ inputs.namespace }}
+        REPOSITORY: ${{ inputs.image-repository }}
+        TAG: ${{ inputs.image-tag }}
+        DIGEST: ${{ inputs.image-digest }}
+        PULL_SECRET: ${{ inputs.pull-secret-name }}
+      run: |
+        ARGS=()
+        if [ -n "$PULL_SECRET" ]; then ARGS+=(--set "imagePullSecrets[0].name=${PULL_SECRET}"); fi
+        helm upgrade --install "$APP" "deploy/helm/$APP" \
+          --namespace "$NAMESPACE" --create-namespace \
+          --values "deploy/helm/$APP/values.yaml" \
+          --values "deploy/helm/$APP/values-${ENVIRONMENT}.yaml" \
+          --set image.repository="$REPOSITORY" \
+          --set image.tag="$TAG" \
+          --set image.digest="$DIGEST" \
+          "${ARGS[@]}" \
+          --atomic --wait --timeout 10m --history-max 10
+    - name: Verify rollout
+      shell: bash
+      env:
+        APP: ${{ inputs.app-name }}
+        NAMESPACE: ${{ inputs.namespace }}
+      run: kubectl rollout status "deployment/${APP}" --namespace "$NAMESPACE" --timeout=300s

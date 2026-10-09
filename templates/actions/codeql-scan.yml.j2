@@ -1,0 +1,26 @@
+name: CodeQL analysis
+description: Initialise CodeQL for a language and run the analysis. The calling job needs security-events write.
+
+inputs:
+  language:
+    description: CodeQL language (for example java-kotlin, javascript-typescript, python, csharp, go)
+    required: true
+  build-mode:
+    description: none, autobuild or manual
+    default: none
+  category:
+    description: Code scanning category (keeps results separate per application)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Initialise CodeQL
+      uses: << actions.codeql_init >>
+      with:
+        languages: ${{ inputs.language }}
+        build-mode: ${{ inputs.build-mode }}
+    - name: Analyse
+      uses: << actions.codeql_analyze >>
+      with:
+        category: ${{ inputs.category }}

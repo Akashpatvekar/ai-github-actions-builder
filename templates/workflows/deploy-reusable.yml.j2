@@ -1,0 +1,112 @@
+# Reusable deployment workflow shared by every application release workflow.
+# The GitHub Environment (<< envs | join(", ") >>) supplies per-environment vars/secrets and approval gates.
+name: Deploy (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: Application name
+        type: string
+        required: true
+      environment:
+        description: Target GitHub Environment
+        type: string
+        required: true
+      image_reference:
+        description: 'Suffix appended to the image repository: ":<tag>" or "@<digest>"'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.app_name }} to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-${{ inputs.app_name }}-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      NAMESPACE: ${{ vars.K8S_NAMESPACE || format('{0}-{1}', inputs.app_name, inputs.environment) }}
+    steps:
+      - name: Check out repository
+        uses: << actions.checkout >>
+
+      - name: Resolve image
+        id: image
+        uses: ./.github/actions/resolve-image
+        with:
+          app-name: ${{ inputs.app_name }}
+          registry-host: ${{ vars.REGISTRY_HOST }}
+          registry-namespace: ${{ vars.REGISTRY_NAMESPACE }}
+          reference: ${{ inputs.image_reference }}
+
+      - name: Connect to cluster
+        uses: ./.github/actions/k8s-context-<< cluster >>
+        with:
+<% if cluster == "aks" %>
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          cluster-name: ${{ vars.AKS_CLUSTER_NAME }}
+          resource-group: ${{ vars.AKS_RESOURCE_GROUP }}
+<% elif cluster == "eks" %>
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+          cluster-name: ${{ vars.EKS_CLUSTER_NAME }}
+<% else %>
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+<% endif %>
+
+      - name: Prepare namespace
+        uses: ./.github/actions/k8s-prepare
+        with:
+          namespace: ${{ env.NAMESPACE }}
+<% if reg.needs_pull_secret %>
+          registry-host: ${{ vars.REGISTRY_HOST }}
+          registry-username: ${{ secrets.REGISTRY_USERNAME }}
+          registry-token: ${{ secrets.REGISTRY_TOKEN }}
+<% endif %>
+
+<% if method == "helm" %>
+      - name: Deploy with Helm
+        uses: ./.github/actions/deploy-helm
+        with:
+          app-name: ${{ inputs.app_name }}
+          environment: ${{ inputs.environment }}
+          namespace: ${{ env.NAMESPACE }}
+          image-repository: ${{ steps.image.outputs.repository }}
+          image-tag: ${{ steps.image.outputs.tag }}
+          image-digest: ${{ steps.image.outputs.digest }}
+          pull-secret-name: "<< "regcred" if reg.needs_pull_secret else "" >>"
+<% else %>
+      - name: Deploy with kubectl
+        uses: ./.github/actions/deploy-kubectl
+        with:
+          app-name: ${{ inputs.app_name }}
+          environment: ${{ inputs.environment }}
+          namespace: ${{ env.NAMESPACE }}
+          image: ${{ steps.image.outputs.full }}
+          pull-secret-name: "<< "regcred" if reg.needs_pull_secret else "" >>"
+<% endif %>
+
+      - name: Publish summary
+        if: always()
+        env:
+          APP: ${{ inputs.app_name }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE: ${{ steps.image.outputs.full }}
+          STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### Deploy ${APP} -> ${ENVIRONMENT}"
+            echo "- Namespace: \`${NAMESPACE}\`"
+            echo "- Image: \`${IMAGE}\`"
+            echo "- Status: ${STATUS}"
+          } >> "$GITHUB_STEP_SUMMARY"

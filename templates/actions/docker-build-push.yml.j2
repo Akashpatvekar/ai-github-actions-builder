@@ -1,0 +1,73 @@
+name: Docker build, push and scan
+description: Build an image with Buildx (cache, SBOM, provenance), push it when requested, then scan the pushed image with Trivy.
+
+inputs:
+  app-name:
+    description: Application (image repository) name
+    required: true
+  context:
+    description: Docker build context
+    required: true
+  dockerfile:
+    description: Path to the Dockerfile
+    required: true
+  image-base:
+    description: Registry host plus optional namespace, from the registry-login action
+    required: true
+  push:
+    description: Push the image ("true" or "false")
+    default: "false"
+  scan-fail-severity:
+    description: Severities that fail the image scan
+    default: CRITICAL
+
+outputs:
+  image:
+    description: Image repository without tag
+    value: ${{ steps.name.outputs.image }}
+  digest:
+    description: Image digest (empty when not pushed)
+    value: ${{ steps.build.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Docker Buildx
+      uses: << actions.buildx >>
+    - name: Resolve image name
+      id: name
+      shell: bash
+      env:
+        IMAGE_BASE: ${{ inputs.image-base }}
+        APP: ${{ inputs.app-name }}
+      run: echo "image=${IMAGE_BASE}/${APP}" >> "$GITHUB_OUTPUT"
+    - name: Generate tags and labels
+      id: meta
+      uses: << actions.docker_metadata >>
+      with:
+        images: ${{ steps.name.outputs.image }}
+        tags: |
+          type=sha,format=long
+          type=ref,event=branch
+          type=ref,event=pr
+          type=raw,value=latest,enable={{is_default_branch}}
+    - name: Build and push
+      id: build
+      uses: << actions.docker_build_push >>
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.dockerfile }}
+        push: ${{ inputs.push == 'true' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha,scope=${{ inputs.app-name }}
+        cache-to: type=gha,mode=max,scope=${{ inputs.app-name }}
+        provenance: mode=max
+        sbom: true
+    - name: Scan pushed image
+      if: inputs.push == 'true'
+      uses: ./.github/actions/trivy-scan
+      with:
+        scan-type: image
+        target: ${{ steps.name.outputs.image }}@${{ steps.build.outputs.digest }}
+        fail-severity: ${{ inputs.scan-fail-severity }}

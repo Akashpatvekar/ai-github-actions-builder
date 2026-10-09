@@ -1,0 +1,41 @@
+name: Prepare namespace
+description: Ensure the target namespace exists<% if reg.needs_pull_secret %> and create the image pull secret<% endif %>.
+
+inputs:
+  namespace:
+    description: Target namespace
+    required: true
+<% if reg.needs_pull_secret %>
+  registry-host:
+    description: Registry host the cluster pulls from
+    required: true
+  registry-username:
+    description: Registry user or service account
+    required: true
+  registry-token:
+    description: Registry access token
+    required: true
+  pull-secret-name:
+    description: Name of the image pull secret to create
+    default: regcred
+<% endif %>
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure namespace exists
+      shell: bash
+      env:
+        NAMESPACE: ${{ inputs.namespace }}
+      run: kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+<% if reg.needs_pull_secret %>
+    - name: Create image pull secret
+      uses: << actions.k8s_create_secret >>
+      with:
+        namespace: ${{ inputs.namespace }}
+        secret-type: docker-registry
+        secret-name: ${{ inputs.pull-secret-name }}
+        container-registry-url: ${{ inputs.registry-host }}
+        container-registry-username: ${{ inputs.registry-username }}
+        container-registry-password: ${{ inputs.registry-token }}
+<% endif %>

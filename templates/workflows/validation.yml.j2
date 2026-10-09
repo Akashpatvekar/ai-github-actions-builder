@@ -1,0 +1,140 @@
+name: << app.name >> - Validation
+
+on:
+  pull_request:
+    paths:
+      - "<< path_glob >>"
+      - ".github/workflows/<< app.name >>-validation.yml"
+      - ".github/actions/<< ci_action >>/**"
+  push:
+    branches: [main, develop]
+    paths:
+      - "<< path_glob >>"
+      - ".github/workflows/<< app.name >>-validation.yml"
+      - ".github/actions/<< ci_action >>/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Lint, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: << actions.checkout >>
+      - name: Lint, test and build
+        uses: ./.github/actions/<< ci_action >>
+        with:
+          working-directory: << app.path >>
+          runtime-version: "<< version >>"
+      - name: Upload coverage
+        if: always()
+        uses: << actions.upload_artifact >>
+        with:
+          name: << app.name >>-coverage
+          path: << app.path >>/<< v.coverage_path >>
+          if-no-files-found: ignore
+          retention-days: 7
+
+  codeql:
+    name: CodeQL (<< t.codeql_language >>)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Check out repository
+        uses: << actions.checkout >>
+      - name: CodeQL analysis
+        uses: ./.github/actions/codeql-scan
+        with:
+          language: << t.codeql_language >>
+          build-mode: << t.codeql_build_mode >>
+          category: "/language:<< t.codeql_language >>/<< app.name >>"
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check out repository
+        uses: << actions.checkout >>
+      - name: Review dependency changes
+        uses: << actions.dependency_review >>
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out repository
+        uses: << actions.checkout >>
+        with:
+          fetch-depth: 0
+      - name: Scan for secrets
+        uses: << actions.gitleaks >>
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Required only for repositories owned by an organization
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  dockerfile-lint:
+    name: Dockerfile lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: << actions.checkout >>
+      - name: Lint Dockerfile
+        uses: << actions.hadolint >>
+        with:
+          dockerfile: << app.path >>/Dockerfile
+          failure-threshold: error
+
+  filesystem-scan:
+    name: Trivy filesystem scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out repository
+        uses: << actions.checkout >>
+      - name: Trivy filesystem scan
+        uses: ./.github/actions/trivy-scan
+        with:
+          scan-type: fs
+          target: << app.path >>
+          upload-sarif: "true"
+          category: trivy-fs-<< app.name >>
+
+  validation-gate:
+    name: Validation gate
+    if: always()
+    needs: [ci, codeql, dependency-review, secret-scan, dockerfile-lint, filesystem-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all checks to pass
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for r in $RESULTS; do
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then exit 1; fi
+          done

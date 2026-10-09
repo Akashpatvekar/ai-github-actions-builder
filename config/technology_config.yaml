@@ -1,0 +1,288 @@
+# config/technology_config.yaml
+#
+# Single source of truth consumed by the Jinja2 templates in templates/.
+# Pin action versions here so every generated workflow uses the same set.
+
+actions:
+  checkout: actions/checkout@v4
+  cache: actions/cache@v4
+  upload_artifact: actions/upload-artifact@v4
+  setup_java: actions/setup-java@v4
+  setup_node: actions/setup-node@v4
+  setup_python: actions/setup-python@v5
+  setup_dotnet: actions/setup-dotnet@v4
+  setup_go: actions/setup-go@v5
+  codeql_init: github/codeql-action/init@v3
+  codeql_autobuild: github/codeql-action/autobuild@v3
+  codeql_analyze: github/codeql-action/analyze@v3
+  sarif_upload: github/codeql-action/upload-sarif@v3
+  dependency_review: actions/dependency-review-action@v4
+  gitleaks: gitleaks/gitleaks-action@v2
+  trivy: aquasecurity/trivy-action@0.28.0
+  hadolint: hadolint/hadolint-action@v3.1.0
+  buildx: docker/setup-buildx-action@v3
+  qemu: docker/setup-qemu-action@v3
+  docker_login: docker/login-action@v3
+  docker_metadata: docker/metadata-action@v5
+  docker_build_push: docker/build-push-action@v6
+  azure_login: azure/login@v2
+  aws_credentials: aws-actions/configure-aws-credentials@v4
+  aws_ecr_login: aws-actions/amazon-ecr-login@v2
+  setup_kubectl: azure/setup-kubectl@v4
+  setup_helm: azure/setup-helm@v4
+  k8s_set_context: azure/k8s-set-context@v4
+  k8s_deploy: azure/k8s-deploy@v5
+  aks_set_context: azure/aks-set-context@v4
+  k8s_create_secret: azure/k8s-create-secret@v5
+
+technologies:
+  java:
+    codeql_build_mode: none
+    default_start: "java -jar /app/app.jar"
+    display: Java
+    codeql_language: java-kotlin
+    default_port: 8080
+    health_path: /actuator/health
+    default_version: "21"
+    default_variant: maven
+    setup_action: setup_java
+    variants:
+      maven:
+        cache: maven
+        install: ""
+        lint: "mvn -B -ntp checkstyle:check"
+        test: "mvn -B -ntp verify"
+        build: "mvn -B -ntp package -DskipTests"
+        coverage_path: "target/site/jacoco"
+        dep_files: ["pom.xml"]
+      gradle:
+        cache: gradle
+        install: ""
+        lint: "./gradlew check -x test"
+        test: "./gradlew test jacocoTestReport"
+        build: "./gradlew build -x test"
+        coverage_path: "build/reports/jacoco"
+        dep_files: ["build.gradle", "build.gradle.kts", "settings.gradle"]
+
+  node:
+    codeql_build_mode: none
+    default_start: "npm start"
+    display: Node.js
+    codeql_language: javascript-typescript
+    default_port: 3000
+    health_path: /health
+    default_version: "20"
+    default_variant: npm
+    setup_action: setup_node
+    variants:
+      npm:
+        cache: npm
+        install: "npm ci"
+        lint: "npm run lint --if-present"
+        test: "npm test --if-present -- --coverage"
+        build: "npm run build --if-present"
+        coverage_path: "coverage"
+        dep_files: ["package.json", "package-lock.json"]
+      yarn:
+        cache: yarn
+        install: "yarn install --frozen-lockfile"
+        lint: "yarn run lint"
+        test: "yarn test --coverage"
+        build: "yarn build"
+        coverage_path: "coverage"
+        dep_files: ["package.json", "yarn.lock"]
+
+  typescript:
+    codeql_build_mode: none
+    default_start: "npm start"
+    display: TypeScript
+    codeql_language: javascript-typescript
+    default_port: 3000
+    health_path: /health
+    default_version: "20"
+    default_variant: npm
+    setup_action: setup_node
+    variants:
+      npm:
+        cache: npm
+        install: "npm ci"
+        lint: "npm run lint --if-present && npx --no-install tsc --noEmit"
+        test: "npm test --if-present -- --coverage"
+        build: "npm run build"
+        coverage_path: "coverage"
+        dep_files: ["package.json", "package-lock.json", "tsconfig.json"]
+      yarn:
+        cache: yarn
+        install: "yarn install --frozen-lockfile"
+        lint: "yarn run lint && yarn tsc --noEmit"
+        test: "yarn test --coverage"
+        build: "yarn build"
+        coverage_path: "coverage"
+        dep_files: ["package.json", "yarn.lock", "tsconfig.json"]
+
+  python:
+    codeql_build_mode: none
+    default_start: "python main.py"
+    display: Python
+    codeql_language: python
+    default_port: 8000
+    health_path: /health
+    default_version: "3.12"
+    default_variant: pip
+    setup_action: setup_python
+    variants:
+      pip:
+        cache: pip
+        install: "python -m pip install --upgrade pip && pip install -r requirements.txt ruff pytest pytest-cov"
+        lint: "ruff check ."
+        test: "pytest --cov=. --cov-report=xml --cov-report=term"
+        build: "python -m compileall -q ."
+        coverage_path: "coverage.xml"
+        dep_files: ["requirements.txt"]
+      poetry:
+        cache: poetry
+        install: "pipx install poetry && poetry install --no-interaction"
+        lint: "poetry run ruff check ."
+        test: "poetry run pytest --cov=. --cov-report=xml --cov-report=term"
+        build: "poetry build"
+        coverage_path: "coverage.xml"
+        dep_files: ["pyproject.toml", "poetry.lock"]
+
+  dotnet:
+    codeql_build_mode: none
+    default_start: "dotnet app.dll"
+    display: .NET
+    codeql_language: csharp
+    default_port: 8080
+    health_path: /healthz
+    default_version: "8.0.x"
+    default_variant: dotnet
+    setup_action: setup_dotnet
+    variants:
+      dotnet:
+        cache: nuget
+        install: "dotnet restore"
+        lint: "dotnet format --verify-no-changes --no-restore"
+        test: "dotnet test --no-restore --collect:'XPlat Code Coverage' --results-directory ./TestResults"
+        build: "dotnet build --no-restore -c Release"
+        coverage_path: "TestResults"
+        dep_files: ["*.csproj", "*.sln", "Directory.Packages.props"]
+
+  go:
+    codeql_build_mode: autobuild
+    default_start: "/app/app"
+    display: Go
+    codeql_language: go
+    default_port: 8080
+    health_path: /healthz
+    default_version: "1.22"
+    default_variant: go
+    setup_action: setup_go
+    variants:
+      go:
+        cache: go
+        install: "go mod download"
+        lint: "go vet ./..."
+        test: "go test -race -coverprofile=coverage.out ./..."
+        build: "go build ./..."
+        coverage_path: "coverage.out"
+        dep_files: ["go.mod", "go.sum"]
+
+# Registry definitions. `auth` drives which composite login action is rendered.
+# vars_* are non-secret configuration; secrets_* are credentials/placeholders.
+registries:
+  acr:
+    display: Azure Container Registry
+    auth: service_principal
+    host_example: myregistry.azurecr.io
+    needs_pull_secret: false
+    vars:
+      REGISTRY_HOST: "ACR login server, e.g. myregistry.azurecr.io"
+      REGISTRY_NAMESPACE: "Repository prefix, e.g. apps (optional)"
+    secrets:
+      ACR_CLIENT_ID: "Service principal (app registration) client id with AcrPush on the registry"
+      ACR_CLIENT_SECRET: "Client secret of that service principal"
+
+  ecr:
+    display: Amazon ECR
+    auth: aws_oidc
+    host_example: 123456789012.dkr.ecr.eu-west-1.amazonaws.com
+    needs_pull_secret: false
+    vars:
+      REGISTRY_HOST: "ECR registry host, e.g. 123456789012.dkr.ecr.eu-west-1.amazonaws.com"
+      AWS_REGION: "AWS region, e.g. eu-west-1"
+      REGISTRY_NAMESPACE: "Repository prefix, e.g. apps (optional)"
+    secrets:
+      AWS_ROLE_TO_ASSUME: "ARN of IAM role trusted for GitHub OIDC with ECR push rights"
+
+  jfrog:
+    display: JFrog Artifactory
+    auth: token
+    host_example: mycompany.jfrog.io
+    needs_pull_secret: true
+    vars:
+      REGISTRY_HOST: "Artifactory host incl. docker repo, e.g. mycompany.jfrog.io"
+      REGISTRY_NAMESPACE: "Docker repository key, e.g. docker-local"
+    secrets:
+      REGISTRY_USERNAME: "Artifactory user or service account"
+      REGISTRY_TOKEN: "Artifactory access token (identity token)"
+
+  nexus:
+    display: Sonatype Nexus
+    auth: token
+    host_example: nexus.mycompany.com:5000
+    needs_pull_secret: true
+    vars:
+      REGISTRY_HOST: "Nexus docker connector host:port"
+      REGISTRY_NAMESPACE: "Repository path prefix (optional)"
+    secrets:
+      REGISTRY_USERNAME: "Nexus user or service account"
+      REGISTRY_TOKEN: "Nexus password / user token"
+
+# Cluster connectivity. `generic` uses a kubeconfig secret and works anywhere.
+clusters:
+  generic:
+    display: Any cluster via kubeconfig
+    vars: {}
+    secrets:
+      KUBE_CONFIG: "Base64-free raw kubeconfig for the target environment (set per GitHub Environment)"
+  aks:
+    display: Azure Kubernetes Service
+    vars:
+      AKS_CLUSTER_NAME: "AKS cluster name (set per GitHub Environment)"
+      AKS_RESOURCE_GROUP: "Resource group of the cluster (set per GitHub Environment)"
+      AZURE_TENANT_ID: "Entra ID tenant id"
+      AZURE_SUBSCRIPTION_ID: "Azure subscription id"
+    secrets:
+      AZURE_CLIENT_ID: "Federated app registration client id (set per GitHub Environment)"
+  eks:
+    display: Amazon EKS
+    vars:
+      EKS_CLUSTER_NAME: "EKS cluster name (set per GitHub Environment)"
+      AWS_REGION: "AWS region"
+    secrets:
+      AWS_ROLE_TO_ASSUME: "IAM role trusted for GitHub OIDC with eks:DescribeCluster and cluster RBAC mapping"
+
+environments:
+  dev:
+    branch_trigger: true
+    approvals: false
+    replicas: 1
+  test:
+    branch_trigger: false
+    approvals: false
+    replicas: 1
+  uat:
+    branch_trigger: false
+    approvals: true
+    replicas: 2
+  prod:
+    branch_trigger: false
+    approvals: true
+    replicas: 3
+
+deployment_methods:
+  kubectl:
+    display: Plain kubectl manifests
+  helm:
+    display: Helm chart

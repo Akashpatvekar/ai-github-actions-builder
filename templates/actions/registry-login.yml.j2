@@ -1,0 +1,87 @@
+name: Registry login (<< reg.display >>)
+description: Authenticate to << reg.display >> and compute the image base path. Credentials are passed as inputs from secrets.
+
+inputs:
+<% if registry == "ecr" %>
+  aws-region:
+    description: AWS region of the registry
+    required: true
+  role-to-assume:
+    description: IAM role ARN trusted for GitHub OIDC (needs ecr push permissions)
+    required: true
+<% elif registry == "acr" %>
+  registry-host:
+    description: ACR login server, e.g. myregistry.azurecr.io
+    required: true
+  client-id:
+    description: Service principal client id
+    required: true
+  client-secret:
+    description: Service principal client secret
+    required: true
+<% else %>
+  registry-host:
+    description: Registry host (and port), e.g. << reg.host_example >>
+    required: true
+  username:
+    description: Registry user or service account
+    required: true
+  token:
+    description: Registry access token
+    required: true
+<% endif %>
+  namespace:
+    description: Optional repository prefix
+    default: ""
+
+outputs:
+  registry:
+    description: Registry host
+    value: ${{ steps.base.outputs.registry }}
+  image-base:
+    description: Registry host plus optional namespace, no trailing slash
+    value: ${{ steps.base.outputs.image-base }}
+
+runs:
+  using: composite
+  steps:
+<% if registry == "ecr" %>
+    - name: Configure AWS credentials (OIDC)
+      uses: << actions.aws_credentials >>
+      with:
+        role-to-assume: ${{ inputs.role-to-assume }}
+        aws-region: ${{ inputs.aws-region }}
+    - name: Log in to Amazon ECR
+      id: ecr
+      uses: << actions.aws_ecr_login >>
+    - name: Compute image base path
+      id: base
+      shell: bash
+      env:
+        REGISTRY: ${{ steps.ecr.outputs.registry }}
+        NAMESPACE: ${{ inputs.namespace }}
+      run: |
+        echo "registry=$REGISTRY" >> "$GITHUB_OUTPUT"
+        echo "image-base=${REGISTRY}${NAMESPACE:+/$NAMESPACE}" >> "$GITHUB_OUTPUT"
+<% else %>
+    - name: Log in to << reg.display >>
+      uses: << actions.docker_login >>
+      with:
+        registry: ${{ inputs.registry-host }}
+<% if registry == "acr" %>
+        username: ${{ inputs.client-id }}
+        password: ${{ inputs.client-secret }}
+<% else %>
+        username: ${{ inputs.username }}
+        password: ${{ inputs.token }}
+<% endif %>
+    - name: Compute image base path
+      id: base
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry-host }}
+        NAMESPACE: ${{ inputs.namespace }}
+      run: |
+        echo "registry=$REGISTRY" >> "$GITHUB_OUTPUT"
+        echo "image-base=${REGISTRY}${NAMESPACE:+/$NAMESPACE}" >> "$GITHUB_OUTPUT"
+<% endif %>

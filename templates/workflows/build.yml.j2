@@ -1,0 +1,78 @@
+name: << app.name >> - Build
+
+on:
+  push:
+    branches: [main, "release/**"]
+    paths:
+      - "<< path_glob >>"
+      - ".github/workflows/<< app.name >>-build.yml"
+      - ".github/actions/registry-login-<< registry >>/**"
+  pull_request:
+    paths:
+      - "<< path_glob >>"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write        # OIDC (AWS) and build provenance
+      security-events: write # Trivy SARIF upload
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.image.outputs.digest }}
+    steps:
+      - name: Check out repository
+        uses: << actions.checkout >>
+
+      - name: Registry login (<< reg.display >>)
+        id: registry
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/registry-login-<< registry >>
+        with:
+<% if registry == "ecr" %>
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+<% elif registry == "acr" %>
+          registry-host: ${{ vars.REGISTRY_HOST }}
+          client-id: ${{ secrets.ACR_CLIENT_ID }}
+          client-secret: ${{ secrets.ACR_CLIENT_SECRET }}
+<% else %>
+          registry-host: ${{ vars.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          token: ${{ secrets.REGISTRY_TOKEN }}
+<% endif %>
+          namespace: ${{ vars.REGISTRY_NAMESPACE }}
+
+      - name: Build, push and scan image
+        id: image
+        uses: ./.github/actions/docker-build-push
+        with:
+          app-name: << app.name >>
+          context: << app.path >>
+          dockerfile: << app.path >>/Dockerfile
+          image-base: ${{ steps.registry.outputs.image-base || 'local' }}
+          push: ${{ github.event_name != 'pull_request' }}
+
+      - name: Publish summary
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          {
+            echo "### << app.name >> image"
+            echo "- Image: \`${IMAGE}\`"
+            echo "- Digest: \`${DIGEST}\`"
+            echo "- Tag: \`sha-${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

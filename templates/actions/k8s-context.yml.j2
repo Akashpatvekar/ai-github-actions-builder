@@ -1,0 +1,76 @@
+name: Kubernetes context (<< cluster_cfg.display >>)
+description: Authenticate to the cluster and install kubectl<% if method == "helm" %> and Helm<% endif %>.
+
+inputs:
+<% if cluster == "aks" %>
+  client-id:
+    description: Federated app registration client id
+    required: true
+  tenant-id:
+    description: Entra ID tenant id
+    required: true
+  subscription-id:
+    description: Azure subscription id
+    required: true
+  cluster-name:
+    description: AKS cluster name
+    required: true
+  resource-group:
+    description: Resource group of the cluster
+    required: true
+<% elif cluster == "eks" %>
+  role-to-assume:
+    description: IAM role ARN trusted for GitHub OIDC
+    required: true
+  aws-region:
+    description: AWS region of the cluster
+    required: true
+  cluster-name:
+    description: EKS cluster name
+    required: true
+<% else %>
+  kubeconfig:
+    description: Kubeconfig content for the target cluster
+    required: true
+<% endif %>
+
+runs:
+  using: composite
+  steps:
+<% if cluster == "aks" %>
+    - name: Azure login (OIDC)
+      uses: << actions.azure_login >>
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ inputs.subscription-id }}
+    - name: Set AKS context
+      uses: << actions.aks_set_context >>
+      with:
+        cluster-name: ${{ inputs.cluster-name }}
+        resource-group: ${{ inputs.resource-group }}
+<% elif cluster == "eks" %>
+    - name: Configure AWS credentials (OIDC)
+      uses: << actions.aws_credentials >>
+      with:
+        role-to-assume: ${{ inputs.role-to-assume }}
+        aws-region: ${{ inputs.aws-region }}
+    - name: Set EKS context
+      shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster-name }}
+        AWS_REGION: ${{ inputs.aws-region }}
+      run: aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+<% else %>
+    - name: Set Kubernetes context from kubeconfig
+      uses: << actions.k8s_set_context >>
+      with:
+        method: kubeconfig
+        kubeconfig: ${{ inputs.kubeconfig }}
+<% endif %>
+    - name: Install kubectl
+      uses: << actions.setup_kubectl >>
+<% if method == "helm" %>
+    - name: Install Helm
+      uses: << actions.setup_helm >>
+<% endif %>

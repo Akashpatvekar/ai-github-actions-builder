@@ -1,0 +1,51 @@
+name: Resolve image reference
+description: Combine registry settings, application name and a tag or digest suffix into image coordinates.
+
+inputs:
+  app-name:
+    description: Application (image repository) name
+    required: true
+  registry-host:
+    description: Registry host
+    required: true
+  registry-namespace:
+    description: Optional repository prefix
+    default: ""
+  reference:
+    description: 'Suffix to append to the repository: ":<tag>" or "@<digest>"'
+    required: true
+
+outputs:
+  repository:
+    description: Image repository without tag or digest
+    value: ${{ steps.resolve.outputs.repository }}
+  tag:
+    description: Image tag (empty when a digest is used)
+    value: ${{ steps.resolve.outputs.tag }}
+  digest:
+    description: Image digest (empty when a tag is used)
+    value: ${{ steps.resolve.outputs.digest }}
+  full:
+    description: Complete image reference
+    value: ${{ steps.resolve.outputs.full }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve image coordinates
+      id: resolve
+      shell: bash
+      env:
+        APP: ${{ inputs.app-name }}
+        REGISTRY_HOST: ${{ inputs.registry-host }}
+        REGISTRY_NAMESPACE: ${{ inputs.registry-namespace }}
+        REFERENCE: ${{ inputs.reference }}
+      run: |
+        REPO="${REGISTRY_HOST}${REGISTRY_NAMESPACE:+/$REGISTRY_NAMESPACE}/${APP}"
+        case "$REFERENCE" in
+          @*) echo "digest=${REFERENCE#@}" >> "$GITHUB_OUTPUT"; echo "tag=" >> "$GITHUB_OUTPUT" ;;
+          :*) echo "tag=${REFERENCE#:}" >> "$GITHUB_OUTPUT"; echo "digest=" >> "$GITHUB_OUTPUT" ;;
+          *) echo "reference must start with ':' or '@'" >&2; exit 1 ;;
+        esac
+        echo "repository=${REPO}" >> "$GITHUB_OUTPUT"
+        echo "full=${REPO}${REFERENCE}" >> "$GITHUB_OUTPUT"

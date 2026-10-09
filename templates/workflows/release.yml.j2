@@ -1,0 +1,84 @@
+name: << app.name >> - Release
+
+on:
+  workflow_run:
+    workflows: ["<< app.name >> - Build"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment ("all" promotes sequentially, honouring approvals)
+        type: choice
+        required: true
+        default: << envs[0] >>
+        options:
+<% for e in envs %>
+          - << e >>
+<% endfor %>
+          - all
+      image_tag:
+        description: Image tag to deploy (e.g. sha-<commit>). Ignored when a digest is given.
+        type: string
+        required: false
+      image_digest:
+        description: Image digest to deploy (sha256:...). Preferred - immutable.
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  id-token: write # needed by _deploy.yml for cloud OIDC
+
+concurrency:
+  group: << app.name >>-release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve image
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      reference: ${{ steps.ref.outputs.reference }}
+    steps:
+      - id: ref
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          IN_TAG: ${{ inputs.image_tag }}
+          IN_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          if [ "$EVENT" = "workflow_run" ]; then
+            echo "reference=:sha-${RUN_SHA}" >> "$GITHUB_OUTPUT"
+          elif [ -n "$IN_DIGEST" ]; then
+            echo "reference=@${IN_DIGEST}" >> "$GITHUB_OUTPUT"
+          elif [ -n "$IN_TAG" ]; then
+            echo "reference=:${IN_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Provide image_tag or image_digest" >&2; exit 1
+          fi
+<% for e in envs %>
+
+  deploy-<< e >>:
+    name: Deploy to << e >>
+    needs: [resolve<% if not loop.first %>, deploy-<< envs[loop.index0 - 1] >><% endif %>]
+<% if loop.first %>
+    if: >-
+      ${{ !cancelled() && needs.resolve.result == 'success' && (
+        github.event_name == 'workflow_run' ||
+        inputs.environment == '<< e >>' || inputs.environment == 'all') }}
+<% else %>
+    if: >-
+      ${{ !cancelled() && needs.resolve.result == 'success' &&
+        needs.deploy-<< envs[loop.index0 - 1] >>.result != 'failure' &&
+        github.event_name == 'workflow_dispatch' &&
+        (inputs.environment == '<< e >>' || (inputs.environment == 'all' && needs.deploy-<< envs[loop.index0 - 1] >>.result == 'success')) }}
+<% endif %>
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      app_name: << app.name >>
+      environment: << e >>
+      image_reference: ${{ needs.resolve.outputs.reference }}
+    secrets: inherit
+<% endfor %>
