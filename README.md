@@ -45,10 +45,10 @@ python main.py -r "ACR, AKS, Helm" --repo ../my-monorepo -o out
 python main.py -r "Generate CI/CD for this architecture" --diagram arch.png -o out
 
 # No LLM: deterministic from a spec file
-python main.py --no-llm --spec spec.json -o out
+python main.py --no-llm --spec examples/spec.json -o out
 ```
 
-`spec.json` example:
+`examples/spec.json` (copy and edit; `--spec` takes a path):
 ```json
 {"apps": [{"name": "orders", "path": "services/orders", "tech": "java", "variant": "maven"}],
  "registry": "acr", "cluster": "aks", "deploy_method": "helm"}

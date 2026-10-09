@@ -31,8 +31,15 @@ def main() -> int:
 
     spec = None
     if args.spec:
-        with open(args.spec) as f:
-            spec = PipelineSpec.model_validate_json(f.read())
+        try:
+            with open(args.spec) as f:
+                spec = PipelineSpec.model_validate_json(f.read())
+        except FileNotFoundError:
+            print(f"Spec file not found: {args.spec} (see examples/spec.json)", file=sys.stderr)
+            return 2
+        except ValueError as e:
+            print(f"Invalid spec file {args.spec}: {e}", file=sys.stderr)
+            return 2
     elif not (args.request or args.repo or args.diagram):
         print("Provide --request, --repo, --diagram or --spec", file=sys.stderr)
         return 2
